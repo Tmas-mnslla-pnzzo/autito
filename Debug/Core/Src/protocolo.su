@@ -1,0 +1,4 @@
+../Core/Src/protocolo.c:12:6:Protocolo_Init	4	static
+../Core/Src/protocolo.c:24:6:Protocolo_SetCmdParser	16	static
+../Core/Src/protocolo.c:28:6:Decode	16	static
+../Core/Src/protocolo.c:62:6:Encode	24	static

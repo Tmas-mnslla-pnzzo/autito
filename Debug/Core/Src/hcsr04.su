@@ -1,0 +1,4 @@
+../Core/Src/hcsr04.c:3:6:HCSR04_Init	24	static
+../Core/Src/hcsr04.c:14:6:HCSR04_Trigger	16	static
+../Core/Src/hcsr04.c:23:6:HCSR04_Tick	32	static
+../Core/Src/hcsr04.c:67:9:HCSR04_IsBusy	16	static

@@ -1,0 +1,6 @@
+../Core/Src/sg90.c:3:17:_clamp	2
+../Core/Src/sg90.c:7:6:SG90_Init	2
+../Core/Src/sg90.c:14:6:SG90_SetAngle	2
+../Core/Src/sg90.c:20:6:SG90_SetPulse	1
+../Core/Src/sg90.c:24:6:SG90_Tick	6
+../Core/Src/sg90.c:46:10:SG90_GetPulse	1
