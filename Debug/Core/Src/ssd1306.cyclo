@@ -7,5 +7,5 @@
 ../Core/Src/ssd1306.c:182:6:SSD1306_DrawText	4
 ../Core/Src/ssd1306.c:190:6:SSD1306_DrawNumber	4
 ../Core/Src/ssd1306.c:206:6:SSD1306_DrawNumberSigned	2
-../Core/Src/ssd1306.c:215:6:SSD1306_Update	1
-../Core/Src/ssd1306.c:222:6:SSD1306_UpdatePage	2
+../Core/Src/ssd1306.c:215:6:SSD1306_Update	2
+../Core/Src/ssd1306.c:225:6:SSD1306_UpdatePage	2

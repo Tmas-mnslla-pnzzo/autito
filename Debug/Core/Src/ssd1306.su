@@ -7,5 +7,5 @@
 ../Core/Src/ssd1306.c:182:6:SSD1306_DrawText	32	static
 ../Core/Src/ssd1306.c:190:6:SSD1306_DrawNumber	56	static
 ../Core/Src/ssd1306.c:206:6:SSD1306_DrawNumberSigned	32	static
-../Core/Src/ssd1306.c:215:6:SSD1306_Update	16	static
-../Core/Src/ssd1306.c:222:6:SSD1306_UpdatePage	16	static
+../Core/Src/ssd1306.c:215:6:SSD1306_Update	24	static
+../Core/Src/ssd1306.c:225:6:SSD1306_UpdatePage	16	static

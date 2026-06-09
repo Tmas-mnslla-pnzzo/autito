@@ -105,20 +105,20 @@ static const uint8_t font6x8[][6] = {
 // ── Secuencia de inicializacion SSD1306 ───────────────────
 static const uint8_t init_cmds[] = {
     0xAE,       // display off
-    0xD5,0x80,  // clock divide ratio / oscillator freq
-    0xA8,0x3F,  // multiplex ratio (63 = 64 filas)
-    0xD3,0x00,  // display offset = 0
-    0x40,       // start line = 0
-    0x8D,0x14,  // charge pump enable
-    0x20,0x00,  // memory addressing mode = horizontal
-    0xA1,       // segment remap (columna 127 = SEG0)
-    0xC8,       // COM scan direction remapped
-    0xDA,0x12,  // COM pins hardware config
+    0xD5,0x80,  // clock
+    0xA8,0x3F,  // multiplex
+    0xD3,0x00,  // display offset
+    0x40,       // start line
+    0x8D,0x14,  // charge pump
+    0xAD,0x8B,  // interno VCC
+    0xA1,       // segment remap
+    0xC8,       // COM scan remapped
+    0xDA,0x12,  // COM pins
     0x81,0xCF,  // contraste
-    0xD9,0xF1,  // pre-charge period
-    0xDB,0x40,  // VCOMH deselect level
+    0xD9,0xF1,  // pre-charge
+    0xDB,0x40,  // VCOMH
     0xA4,       // display from RAM
-    0xA6,       // normal display (no invertido)
+    0xA6,       // normal display
     0xAF,       // display on
 };
 
@@ -213,9 +213,12 @@ void SSD1306_DrawNumberSigned(SSD1306_t *dev, uint8_t col, uint8_t row, int32_t 
 }
 
 void SSD1306_Update(SSD1306_t *dev) {
-    send_cmd(dev, 0x21); send_cmd(dev, 0); send_cmd(dev, 127); // columnas 0-127
-    send_cmd(dev, 0x22); send_cmd(dev, 0); send_cmd(dev, 7);   // paginas 0-7
-    send_data(dev, dev->buf, SSD1306_BUF_SIZE);
+    for (uint8_t page = 0; page < SSD1306_PAGES; page++) {
+        send_cmd(dev, 0xB0 | page);  // set page
+        send_cmd(dev, 0x02);         // columna baja (offset 2 para SH1106)
+        send_cmd(dev, 0x10);         // columna alta
+        send_data(dev, &dev->buf[page * SSD1306_WIDTH], SSD1306_WIDTH);
+    }
     dev->dirty = 0;
 }
 

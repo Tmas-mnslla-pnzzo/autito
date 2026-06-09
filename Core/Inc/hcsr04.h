@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-extern uint8_t HCSR04_TRIG_PULSE_US;
-extern uint16_t HCSR04_ECHO_TIMEOUT_US;
+#define HCSR04_TRIG_PULSE_US 200
+#define HCSR04_ECHO_TIMEOUT_US 38000
 
 typedef void (*hcsr04_pin_write_cb_t)(uint8_t state);
 typedef uint8_t (*hcsr04_pin_read_cb_t)(void);

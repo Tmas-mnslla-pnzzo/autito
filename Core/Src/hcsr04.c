@@ -52,7 +52,7 @@ void HCSR04_Tick(HCSR04_t *dev, uint32_t now_us)
 			float dist = (float)echo_us * HCSR04_US_TO_CM;
 			dev->state = HCSR04_STATE_IDLE;
 			if (dev->on_result) dev->on_result(dist);
-			} else if ((now_us - dev->echo_start_us) >= HCSR04_ECHO_TIMEOUT_US) {
+			} else if ( (now_us - dev->echo_start_us) >= HCSR04_ECHO_TIMEOUT_US) {
 			dev->state = HCSR04_STATE_IDLE;
 			if (dev->on_result) dev->on_result(-1.0f);
 		}

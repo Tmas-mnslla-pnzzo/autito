@@ -3,33 +3,33 @@
 
 #include <stdint.h>
 
-extern uint32_t SG90_PERIOD_US;
-extern uint32_t SG90_PULSE_MIN_US;
-extern uint32_t SG90_PULSE_MAX_US;
-extern uint32_t SG90_PULSE_NEUTRAL_US;
+#define SG90_PERIOD_US 20000
+#define SG90_PULSE_MIN_US 544
+#define SG90_PULSE_MAX_US 2400
+#define SG90_PULSE_NEUTRAL_US 1472
 
 /* ?? Callback ??????????????????????????????????????????? */
-/* Escribe el pin de señal del servo                       */
+/* Escribe el pin de seï¿½al del servo                       */
 typedef void (*sg90_pin_write_cb_t)(uint8_t state);
 
 /* ?? Handle ????????????????????????????????????????????? */
 typedef struct {
-	sg90_pin_write_cb_t  set_pin;      /* escribe pin señal   */
+	sg90_pin_write_cb_t  set_pin;      /* escribe pin seï¿½al   */
 	uint32_t             pulse_us;     /* ancho de pulso (us) */
 	uint32_t             counter_us;   /* pos. en el periodo  */
 } SG90_t;
 
 /* ?? API ???????????????????????????????????????????????? */
-/* Inicializa en posición neutra (90°)                     */
+/* Inicializa en posiciï¿½n neutra (90ï¿½)                     */
 void SG90_Init    (SG90_t *dev, sg90_pin_write_cb_t set_pin);
 
-/* Establece posición por ángulo [0, 180]                  */
+/* Establece posiciï¿½n por ï¿½ngulo [0, 180]                  */
 void SG90_SetAngle(SG90_t *dev, uint8_t angle_deg);
 
-/* Establece posición directamente en µs (calibración)     */
+/* Establece posiciï¿½n directamente en ï¿½s (calibraciï¿½n)     */
 void SG90_SetPulse(SG90_t *dev, uint32_t pulse_us);
 
-/* Motor de PWM — llamar desde timer ISR con elapsed en µs */
+/* Motor de PWM ï¿½ llamar desde timer ISR con elapsed en ï¿½s */
 /* Recomendado: elapsed_us constante <= 544 (min. pulso)   */
 void SG90_Tick(SG90_t *dev, uint32_t elapsed_us);
 

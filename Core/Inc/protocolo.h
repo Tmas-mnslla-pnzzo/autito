@@ -6,6 +6,7 @@
 #define BUFRXSIZE 128
 #define BUFTXSIZE 128
 #define TOKEN_VAL ':'
+#define CMD_SET_WIFI  0x21
 
 typedef struct {
 	uint8_t *buf;

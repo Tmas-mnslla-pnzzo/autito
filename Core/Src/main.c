@@ -18,11 +18,17 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "string.h"
-#include "stdio.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "string.h"
+#include "stdio.h"
+#include "sg90.h"
+#include "hcsr04.h"
+#include "soft_i2c.h"
+#include "ssd1306.h"
+#include "ESP01.h"
+#include "protocolo.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,6 +54,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
 uint32_t valores_IR[3];
@@ -55,7 +62,16 @@ volatile uint16_t tick_100ms = 0;
 volatile uint8_t flag_loop = 0;
 volatile uint32_t tick_servo = 0;
 volatile uint8_t flag_2seg = 0;
+volatile uint32_t now_us = 0;
+volatile float distancia = 0;
+volatile uint16_t pwm_actual = 500;
+char pc_ip[20] = "192.168.1.10";
+uint8_t uart1_rx_byte;
+uint8_t esp_rx_byte;
+HCSR04_t sonar;
 SG90_t servo;
+SSD1306_t display;
+_sESP01Handle hESP01;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -66,17 +82,40 @@ static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void onESP01StateChange(_eESP01STATUS state);
+void CmdParser(uint8_t cmd, uint8_t *payload, uint8_t n);
+void servo_set_pin(uint8_t state);
+void trigger_set(uint8_t state);
+uint8_t echo_get(void);
+void sonar_result(float dist_cm);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 int __io_putchar(int ch)
 {
-  // Transmite un carácter por USART1 con un timeout de 10ms
-  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 10);
-  return ch;
+    HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 10);
+    return ch;
+}
+
+void ESP01_DoCHPD(uint8_t value)
+{
+    // CH_PD fijo a 3.3V, no necesita control
+}
+
+int ESP01_WriteUSARTByte(uint8_t value)
+{
+    if (HAL_UART_Transmit(&huart3, &value, 1, 10) == HAL_OK)
+        return 1;
+    return 0;
+}
+
+void ESP01_WriteByteToBufRX(uint8_t value)
+{
+    rx.rBuf.buf[rx.rBuf.iw++] = value;
+    rx.rBuf.iw &= (rx.rBuf.size - 1);
 }
 /* USER CODE END 0 */
 
@@ -114,23 +153,52 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_Delay(100);  // 100ms - visible en el multímetro
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+  Protocolo_Init();
+  Protocolo_SetCmdParser(CmdParser);
+  HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
   HAL_ADCEx_Calibration_Start(&hadc1);
   HAL_TIM_Base_Start_IT(&htim2);           // tick cada 100µs
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3); // EN1 - PB0
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4); // EN2 - PB1
   SG90_Init(&servo, servo_set_pin);
-  /* USER CODE END 2 */
+  HCSR04_Init(&sonar, trigger_set, echo_get, sonar_result);
+
+  SSD1306_Init(&display, soft_i2c_write, SSD1306_ADDR);
+  SSD1306_Clear(&display);
+  SSD1306_DrawText(&display, 0, 0, "XDXD", 1);
+  SSD1306_Update(&display);
+
+  uint8_t test[] = "AT\r\n";
+  HAL_UART_Transmit(&huart3, test, 4, 100);
+
+  hESP01.DoCHPD          = ESP01_DoCHPD;
+  hESP01.WriteUSARTByte  = ESP01_WriteUSARTByte;
+  hESP01.WriteByteToBufRX = ESP01_WriteByteToBufRX;
+
+  ESP01_AttachChangeState(onESP01StateChange);
+  HAL_UART_Receive_IT(&huart3, &esp_rx_byte, 1);
+  ESP01_Init(&hESP01);
+  ESP01_StartUDP("192.168.1.10", 5000, 5000);
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  ESP01_Task();
+	  Decode();
+
       if (flag_loop)
       {
           flag_loop = 0;
+          uint32_t t = now_us;
+          HCSR04_Trigger(&sonar, t);
 
-          uint8_t trama[9];
+          // Leer IR
           ADC_ChannelConfTypeDef sConfig = {0};
           sConfig.Rank = ADC_REGULAR_RANK_1;
           sConfig.SamplingTime = ADC_SAMPLETIME_55CYCLES_5;
@@ -160,19 +228,47 @@ int main(void)
           uint8_t ir_cen = (adc_cen > 950)  ? 1 : 0;
           uint8_t ir_der = (adc_der > 950)  ? 1 : 0;
 
-          char debug[64];
-          sprintf(debug, "CH0:%lu CH1:%lu CH2:%lu\r\n", adc_izq, adc_cen, adc_der);
-          HAL_UART_Transmit(&huart1, (uint8_t*)debug, strlen(debug), 100);
+          uint8_t dist_int = (distancia > 0) ? (uint8_t)distancia : 0;
 
-          trama[0] = 0xAA; trama[1] = 0x30; trama[2] = 0x05;
-          trama[3] = ir_izq; trama[4] = ir_cen; trama[5] = ir_der;
-          trama[6] = 0x00;   trama[7] = 0x1A;
 
-          uint8_t cks = 0;
-          for (int i = 0; i < 8; i++) cks ^= trama[i];
-          trama[8] = cks;
+          uint8_t payload[5];
+                    payload[0] = ir_izq;
+                    payload[1] = ir_cen;
+                    payload[2] = ir_der;
+                    payload[3] = (uint8_t)(dist_int >> 8);   // Byte ALTO
+                    payload[4] = (uint8_t)(dist_int & 0xFF); // Byte BAJO
 
-          HAL_UART_Transmit(&huart1, trama, 9, 100);
+                    // 2. Delegamos el empaquetado y el cálculo matemático del CKS al protocolo
+                    Encode(0x30, payload, 5);
+
+                    // 3. Extraemos los bytes del búfer circular de transmisión (tx)
+                    uint8_t send_buf[32];
+                    uint8_t send_len = 0;
+
+                    // Vaciamos el búfer circular hacia un arreglo lineal para DMA/Polling
+                    // (Asumiendo que 'tx' está accesible vía protocolo.h)
+                    while (tx.rBuf.ir != tx.rBuf.iw)
+                    {
+                        send_buf[send_len++] = tx.rBuf.buf[tx.rBuf.ir++];
+                        // El enmascaramiento bit a bit asegura la circularidad formal (potencia de 2)
+                        tx.rBuf.ir &= (tx.rBuf.size - 1);
+                    }
+
+                    // 4. Transmitimos el datagrama completo a las interfaces físicas
+                    if (send_len > 0)
+                              {
+                                  // 🔌 Canal 1: Cable USB (USART1) - ¡SIEMPRE SE MANDA!
+                                  HAL_UART_Transmit(&huart1, send_buf, send_len, 100);
+
+                                  // 📡 Canal 2: Wi-Fi UDP (Solo si ya le cargaste las credenciales por el cable)
+                                  if (ESP01_StateUDPTCP() == ESP01_UDPTCP_CONNECTED)
+                                  {
+                                      ESP01_Send(send_buf, 0, send_len, send_len);
+                                  }
+                              }
+                    char esp_dbg[40];
+                    sprintf(esp_dbg, "W:%d T:%d\r\n", ESP01_StateWIFI(), ESP01_StateUDPTCP());
+                    HAL_UART_Transmit(&huart1, (uint8_t*)esp_dbg, strlen(esp_dbg), 50);
       }
     /* USER CODE END WHILE */
 
@@ -416,6 +512,39 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -453,7 +582,11 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(HEARBEAT_GPIO_Port, HEARBEAT_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, IN2_Pin|IN1_Pin|IN4_Pin|IN3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, TRIGGER_Pin|IN2_Pin|IN1_Pin|SCL_Pin
+                          |SDA_Pin|IN4_Pin|IN3_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(SERVO_GPIO_Port, SERVO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : HEARBEAT_Pin */
   GPIO_InitStruct.Pin = HEARBEAT_Pin;
@@ -468,12 +601,27 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : IN2_Pin IN1_Pin IN4_Pin IN3_Pin */
-  GPIO_InitStruct.Pin = IN2_Pin|IN1_Pin|IN4_Pin|IN3_Pin;
+  /*Configure GPIO pin : ECHO_Pin */
+  GPIO_InitStruct.Pin = ECHO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ECHO_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : TRIGGER_Pin IN2_Pin IN1_Pin SCL_Pin
+                           SDA_Pin IN4_Pin IN3_Pin */
+  GPIO_InitStruct.Pin = TRIGGER_Pin|IN2_Pin|IN1_Pin|SCL_Pin
+                          |SDA_Pin|IN4_Pin|IN3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SERVO_Pin */
+  GPIO_InitStruct.Pin = SERVO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(SERVO_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -481,6 +629,102 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void CmdParser(uint8_t cmd, uint8_t *payload, uint8_t n)
+{
+    switch (cmd)
+    {
+    	case 0x21:
+    	    char *ssid = (char*)payload;
+    	    char *pass = ssid + strlen(ssid) + 1;
+    	    ESP01_SetWIFI(ssid, pass);
+    	    break;
+        case 0x10: // CMD_MOVE_FORWARD
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,  GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6,  GPIO_PIN_RESET);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, pwm_actual);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, pwm_actual);
+            break;
+
+        case 0x11: // CMD_MOVE_BACKWARD
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,  GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6,  GPIO_PIN_SET);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, pwm_actual);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, pwm_actual);
+            break;
+
+        case 0x12: // CMD_TURN_LEFT
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,  GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6,  GPIO_PIN_RESET);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, pwm_actual);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, pwm_actual);
+            break;
+
+        case 0x13: // CMD_TURN_RIGHT
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,  GPIO_PIN_RESET);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6,  GPIO_PIN_SET);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, pwm_actual);
+            __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, pwm_actual);
+            break;
+
+        case 0x14: // CMD_STOP
+
+        case 0x15: // CMD_SET_PWM
+            if (n >= 1) {
+            	pwm_actual = (payload[0] * 999) / 100;
+            }
+            break;
+
+        case 0x16: // CMD_SET_SERVO
+            if (n >= 1) SG90_SetAngle(&servo, payload[0]);
+            break;
+
+        default:
+            break;
+    }
+}
+void onESP01StateChange(_eESP01STATUS state)
+{
+    if (state == ESP01_WIFI_CONNECTED)
+    {
+        ESP01_StartUDP("192.168.1.10", 5000, 5000);
+    }
+}
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        // Meter byte en buffer del protocolo
+        rx.rBuf.buf[rx.rBuf.iw++] = uart1_rx_byte;
+        rx.rBuf.iw &= (rx.rBuf.size - 1);
+        HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
+    }
+    if (huart->Instance == USART3)
+    {
+        ESP01_WriteRX(esp_rx_byte);
+        HAL_UART_Receive_IT(&huart3, &esp_rx_byte, 1);
+    }
+}
+void sonar_result(float dist_cm)
+{
+    distancia = dist_cm;
+}
+void trigger_set(uint8_t state)
+{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13,
+                      state ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+uint8_t echo_get(void)
+{
+    return HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12) ? 1 : 0;
+}
 void servo_set_pin(uint8_t state)
 {
     HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8,
@@ -491,10 +735,19 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM2)
     {
-        // Tick del servo cada 100µs
+        now_us += 100;
         SG90_Tick(&servo, 100);
+        HCSR04_Tick(&sonar, now_us);
 
-        // Contador loop principal 100ms
+        // Timer 10ms para ESP01
+        static uint16_t esp_tick = 0;
+        esp_tick++;
+        if (esp_tick >= 100)  // 100 x 100µs = 10ms
+        {
+            esp_tick = 0;
+            ESP01_Timeout10ms();  // ← ESTO FALTABA
+        }
+
         tick_100ms++;
         if (tick_100ms >= 1000)
         {
@@ -502,9 +755,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             flag_loop = 1;
         }
 
-        // Contador 2 segundos para el servo
         tick_servo++;
-        if (tick_servo >= 20000)  // 20000 x 100µs = 2s
+        if (tick_servo >= 20000)
         {
             tick_servo = 0;
             flag_2seg = 1;
