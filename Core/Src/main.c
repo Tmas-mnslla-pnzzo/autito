@@ -61,11 +61,14 @@ uint32_t valores_IR[3];
 volatile uint16_t tick_100ms = 0;
 volatile uint8_t flag_loop = 0;
 volatile uint32_t tick_servo = 0;
+uint8_t display_mode = 0;
 volatile uint8_t flag_2seg = 0;
 volatile uint32_t now_us = 0;
 volatile float distancia = 0;
 volatile uint16_t pwm_actual = 500;
+//uint16_t adc_buf[3];
 char pc_ip[20] = "192.168.1.10";
+//192.168.1.10
 uint8_t uart1_rx_byte;
 uint8_t esp_rx_byte;
 HCSR04_t sonar;
@@ -94,6 +97,23 @@ void sonar_result(float dist_cm);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void ESP01_DebugCallback(const char *str)
+{
+    // Canal 1: crudo por UART1
+    HAL_UART_Transmit(&huart1, (uint8_t*)str, strlen(str), 10);
+
+    // Canal 2: empaquetado como TEL_LOG para que la HMI lo muestre bonito
+    uint8_t len = strlen(str);
+    Encode(0x33, (uint8_t*)str, len);
+    uint8_t send_buf[64];
+    uint8_t send_len = 0;
+    while (tx.rBuf.ir != tx.rBuf.iw) {
+        send_buf[send_len++] = tx.rBuf.buf[tx.rBuf.ir++];
+        tx.rBuf.ir &= (tx.rBuf.size - 1);
+    }
+    if (send_len > 0)
+        HAL_UART_Transmit(&huart1, send_buf, send_len, 100);
+}
 int __io_putchar(int ch)
 {
     HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, 10);
@@ -155,13 +175,11 @@ int main(void)
   MX_TIM3_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
-  HAL_Delay(100);  // 100ms - visible en el multímetro
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
   Protocolo_Init();
   Protocolo_SetCmdParser(CmdParser);
   HAL_UART_Receive_IT(&huart1, &uart1_rx_byte, 1);
   HAL_ADCEx_Calibration_Start(&hadc1);
+  //HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, 3);
   HAL_TIM_Base_Start_IT(&htim2);           // tick cada 100µs
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3); // EN1 - PB0
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4); // EN2 - PB1
@@ -170,7 +188,7 @@ int main(void)
 
   SSD1306_Init(&display, soft_i2c_write, SSD1306_ADDR);
   SSD1306_Clear(&display);
-  SSD1306_DrawText(&display, 0, 0, "XDXD", 1);
+  SSD1306_DrawText(&display, 0, 0, "UNER-MECATRONICA", 1);
   SSD1306_Update(&display);
 
   uint8_t test[] = "AT\r\n";
@@ -180,17 +198,29 @@ int main(void)
   hESP01.WriteUSARTByte  = ESP01_WriteUSARTByte;
   hESP01.WriteByteToBufRX = ESP01_WriteByteToBufRX;
 
-  ESP01_AttachChangeState(onESP01StateChange);
   HAL_UART_Receive_IT(&huart3, &esp_rx_byte, 1);
   ESP01_Init(&hESP01);
-  ESP01_StartUDP("192.168.1.10", 5000, 5000);
-
+  ESP01_AttachDebugStr(ESP01_DebugCallback);
+  ESP01_AttachChangeState(onESP01StateChange);
+  ESP01_SetWIFI("InternetPlus_2e7438", "wland18bc7");
+  //172.23.231.216
+  //192.168.1.10
+  //el algoritmo debe ser lo mas inmune posible a la luz, interpolacion cuadratica.el que esta mas oroximo es el que teinemas valor
+  //punto auxiliar o ficticio, hace una parabola y el vertice es donde esta la linea, usar todo el rango dinamico, control tener en cunata la panza diodo curva aplicando PID, dibujar cuadraditos para el control
+  //
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
 	  ESP01_Task();
 	  Decode();
+
+	  if (flag_2seg) {
+	      flag_2seg = 0;
+	      if (display_mode == 0) {
+	          display_mode = 1;  // después de 2 seg pasamos a telemetría
+	      }
+	  }
 
       if (flag_loop)
       {
@@ -228,8 +258,21 @@ int main(void)
           uint8_t ir_cen = (adc_cen > 950)  ? 1 : 0;
           uint8_t ir_der = (adc_der > 950)  ? 1 : 0;
 
-          uint8_t dist_int = (distancia > 0) ? (uint8_t)distancia : 0;
+          uint16_t dist_int = (distancia < 0) ? 0xFFFF : (uint16_t)distancia;
 
+          SSD1306_Clear(&display);
+              if (display_mode == 0) {
+                  SSD1306_DrawText(&display, 0, 0, "UNER-MECATRONICA", 1);
+              } else {
+                  char buf[20];
+                  sprintf(buf, "IR:%d%d%d", ir_izq, ir_cen, ir_der);
+                  SSD1306_DrawText(&display, 0, 0, buf, 1);
+                  sprintf(buf, "Dist: %d cm", dist_int == 0xFFFF ? 9999 : dist_int);
+                  SSD1306_DrawText(&display, 0, 16, buf, 1);
+                  sprintf(buf, "PWM: %d", pwm_actual);
+                  SSD1306_DrawText(&display, 0, 32, buf, 1);
+              }
+              SSD1306_Update(&display);
 
           uint8_t payload[5];
                     payload[0] = ir_izq;
@@ -255,20 +298,15 @@ int main(void)
                     }
 
                     // 4. Transmitimos el datagrama completo a las interfaces físicas
-                    if (send_len > 0)
-                              {
-                                  // 🔌 Canal 1: Cable USB (USART1) - ¡SIEMPRE SE MANDA!
-                                  HAL_UART_Transmit(&huart1, send_buf, send_len, 100);
+                    if (send_len > 0) {
+                        HAL_UART_Transmit(&huart1, send_buf, send_len, 100);
+                        if (ESP01_StateUDPTCP() == ESP01_UDPTCP_CONNECTED) {
+                            if (ESP01_Send(send_buf, 0, send_len, send_len) == ESP01_SEND_READY) {
+                                // ok
+                            }
+                        }
+                    }
 
-                                  // 📡 Canal 2: Wi-Fi UDP (Solo si ya le cargaste las credenciales por el cable)
-                                  if (ESP01_StateUDPTCP() == ESP01_UDPTCP_CONNECTED)
-                                  {
-                                      ESP01_Send(send_buf, 0, send_len, send_len);
-                                  }
-                              }
-                    char esp_dbg[40];
-                    sprintf(esp_dbg, "W:%d T:%d\r\n", ESP01_StateWIFI(), ESP01_StateUDPTCP());
-                    HAL_UART_Transmit(&huart1, (uint8_t*)esp_dbg, strlen(esp_dbg), 50);
       }
     /* USER CODE END WHILE */
 
@@ -629,6 +667,13 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART3)
+    {
+        HAL_UART_Receive_IT(&huart3, &esp_rx_byte, 1);
+    }
+}
 void CmdParser(uint8_t cmd, uint8_t *payload, uint8_t n)
 {
     switch (cmd)
@@ -675,7 +720,13 @@ void CmdParser(uint8_t cmd, uint8_t *payload, uint8_t n)
             break;
 
         case 0x14: // CMD_STOP
-
+        	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
+        	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
+        	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7,  GPIO_PIN_RESET);
+         	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6,  GPIO_PIN_RESET);
+        	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, 0);
+        	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+        	break;
         case 0x15: // CMD_SET_PWM
             if (n >= 1) {
             	pwm_actual = (payload[0] * 999) / 100;
@@ -749,7 +800,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         }
 
         tick_100ms++;
-        if (tick_100ms >= 1000)
+        if (tick_100ms >= 5000)
         {
             tick_100ms = 0;
             flag_loop = 1;
