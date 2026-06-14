@@ -77,8 +77,6 @@ void Error_Handler(void);
 #define IN2_GPIO_Port GPIOB
 #define IN1_Pin GPIO_PIN_15
 #define IN1_GPIO_Port GPIOB
-#define SERVO_Pin GPIO_PIN_8
-#define SERVO_GPIO_Port GPIOA
 #define SCL_Pin GPIO_PIN_4
 #define SCL_GPIO_Port GPIOB
 #define SDA_Pin GPIO_PIN_5

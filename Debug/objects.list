@@ -1,5 +1,6 @@
 "./Core/Src/ESP01.o"
 "./Core/Src/hcsr04.o"
+"./Core/Src/linefollower.o"
 "./Core/Src/main.o"
 "./Core/Src/protocolo.o"
 "./Core/Src/sg90.o"

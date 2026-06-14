@@ -1,0 +1,10 @@
+../Core/Src/linefollower.c:10:21:lf_clampf	3
+../Core/Src/linefollower.c:26:14:lf_normalize	2
+../Core/Src/linefollower.c:54:14:lf_quadratic_position	3
+../Core/Src/linefollower.c:78:6:LF_Init	2
+../Core/Src/linefollower.c:94:6:LF_ResetCalibration	2
+../Core/Src/linefollower.c:104:6:LF_SetPID	1
+../Core/Src/linefollower.c:111:12:LF_Update	9
+../Core/Src/linefollower.c:168:7:LF_GetPosition	1
+../Core/Src/linefollower.c:173:7:LF_GetCorrection	1
+../Core/Src/linefollower.c:178:12:LF_GetStatus	1
